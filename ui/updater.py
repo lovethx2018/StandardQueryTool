@@ -7,6 +7,7 @@ import re
 import ssl
 import hashlib
 import urllib.request
+from urllib.parse import urlparse
 from app_env import logger
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
@@ -43,7 +44,7 @@ def is_newer_version(remote: str, local: str) -> bool:
 def _updater_urlopen(url: str, timeout: int = 15):
     """打开一个 URL（禁用系统代理；始终强制 SSL 证书验证，不降级）。
 
-    专用于访问 Gitee 托管的 version.json 与 Gitee Releases 安装包直链。
+    专用于访问可信站点的 version.json 与 Releases 下载直链。
     自动更新下载的是可执行文件，MITM 攻击可替换整个程序，
     因此必须始终验证证书，不允许降级。
     """
@@ -134,16 +135,29 @@ def _normalize_manifest(data: dict) -> dict:
     }
 
 
-def _gitee_urls(*groups) -> list:
-    """收集并去重 Gitee 下载地址，保持先后顺序。"""
+_TRUSTED_DOWNLOAD_HOSTS = ("gitee.com", "github.com")
+
+
+def _release_urls(*groups) -> list:
+    """收集并去重可信站点的 HTTPS 下载地址，保持先后顺序。"""
     seen = set()
     unique = []
     for group in groups:
         for u in group:
             s = str(u or "").strip()
-            if s and "gitee.com" in s.lower() and s not in seen:
-                seen.add(s)
-                unique.append(s)
+            if not s or s in seen:
+                continue
+            try:
+                parsed = urlparse(s)
+            except Exception:
+                continue
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme != "https" or not host:
+                continue
+            if not any(host == h or host.endswith("." + h) for h in _TRUSTED_DOWNLOAD_HOSTS):
+                continue
+            seen.add(s)
+            unique.append(s)
     return unique
 
 
@@ -152,11 +166,11 @@ def build_download_urls(info: dict, prefer_setup: bool = False) -> list:
 
     prefer_setup=True 时优先安装包（setup.exe），否则优先绿色包 zip。
     """
-    zip_urls = _gitee_urls(
+    zip_urls = _release_urls(
         info.get("download_urls") or [],
         [info.get("download_url") or ""],
     )
-    setup_urls = _gitee_urls(
+    setup_urls = _release_urls(
         info.get("setup_urls") or [],
         [info.get("setup_url") or ""],
     )

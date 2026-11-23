@@ -81,3 +81,20 @@ class TestFetchLatestManifest(unittest.TestCase):
         with patch.object(updater, "_updater_urlopen", side_effect=fake_open):
             info = updater.fetch_latest_release()
         self.assertEqual(info["version"], "1.6.0")
+
+
+class TestDownloadUrlFilter(unittest.TestCase):
+    def test_only_trusted_https_release_urls(self):
+        from ui.updater import build_download_urls
+        info = {
+            "download_urls": [
+                "https://github.com/lovethx2018/StandardQueryTool/releases/download/v1.6.0/a.zip",
+                "https://gitee.com/lovethx2024/app-update-store/releases/download/v1.6.0/a.zip",
+                "http://github.com/insecure/a.zip",
+                "https://evil.example.com/a.zip",
+            ]
+        }
+        urls = build_download_urls(info)
+        self.assertEqual(len(urls), 2)
+        self.assertTrue(urls[0].startswith("https://github.com/"))
+        self.assertTrue(urls[1].startswith("https://gitee.com/"))
