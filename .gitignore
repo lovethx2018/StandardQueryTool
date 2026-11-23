@@ -1,0 +1,59 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+.venv*/
+venv/
+ENV/
+
+# ---- 运行时数据 / 本机缓存（不要提交） ----
+_temp/
+_data/
+update/
+电子规范/
+*.log
+config/settings.json
+config/doc_scan_cache.json
+*.local.json
+
+# ---- 构建产物 ----
+build/
+dist/
+release/
+installer_output/
+*.spec.bak
+
+# ---- 旧 Win7 兼容资产（已不参与打包） ----
+win7_dlls/
+win7_patches/
+runtime/
+
+# ---- 本机 / IDE / Agent 辅助目录 ----
+desktop.ini
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+.agents/
+.codegraph/
+.cursor/
+.omo/
+skills-lock.json
+_mwr.html
+_mwr_iframe.html
+docs/superpowers/
+_tools/
+
+# ---- 其他 ----
+*.zip
+*.7z
+*.rar
+# 脚本/测试产生的运行配置与本机扫描缓存
+scripts/config/
+scripts/_temp/
+ui/_cb_check.png

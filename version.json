@@ -1,0 +1,17 @@
+{
+  "version": "1.5.9",
+  "tag": "v1.5.9",
+  "notes": "v1.5.9 更新内容：\n1. 新增「强制联网」：忽略 30 天内历史缓存，重新拉取并覆盖；使用说明已补充说明\n2. 修复工标网纯数字查询缺发布日期（如 JTG 3460-2026、YD/T 3460-2019）；多源去重时补全空字段\n3. 延续 v1.5.8：卡顿修复、纯数字多前缀命中、自然资源网与 DNS 回退",
+  "download_url": "https://gitee.com/lovethx2024/app-update-store/releases/download/v1.5.9/StandardQueryTool_v1.5.9_win7_py38.zip",
+  "download_urls": [
+    "https://gitee.com/lovethx2024/app-update-store/releases/download/v1.5.9/StandardQueryTool_v1.5.9_win7_py38.zip"
+  ],
+  "asset_name": "StandardQueryTool_v1.5.9_win7_py38.zip",
+  "setup_url": "https://gitee.com/lovethx2024/app-update-store/releases/download/v1.5.9/StandardQueryTool_v1.5.9_win7_py38_setup.exe",
+  "setup_urls": [
+    "https://gitee.com/lovethx2024/app-update-store/releases/download/v1.5.9/StandardQueryTool_v1.5.9_win7_py38_setup.exe"
+  ],
+  "setup_asset_name": "StandardQueryTool_v1.5.9_win7_py38_setup.exe",
+  "lanzou_url": "https://wwawy.lanzoub.com/b0j1kkfcd",
+  "lanzou_pwd": "1234"
+}

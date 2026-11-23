@@ -1,0 +1,58 @@
+# -*- coding: utf-8 -*-
+"""自动更新清单与 SHA-256 校验测试。"""
+import hashlib
+import os
+import sys
+import tempfile
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from ui.updater import _normalize_manifest, _sha256_file, _verify_sha256
+
+
+class TestManifestSha256(unittest.TestCase):
+    def test_normalize_basenames_and_validation(self):
+        good = "a" * 64
+        info = _normalize_manifest({
+            "version": "v1.6.0",
+            "sha256": {
+                r"C:\build\StandardQueryTool.zip": good,
+                "setup.exe": good.upper(),
+                "bad.zip": "not-a-hash",
+            },
+        })
+        self.assertEqual(info["version"], "1.6.0")
+        self.assertEqual(info["sha256"]["standardquerytool.zip"], good)
+        self.assertEqual(info["sha256"]["setup.exe"], good)
+        self.assertNotIn("bad.zip", info["sha256"])
+
+    def test_missing_sha_is_compatible(self):
+        info = _normalize_manifest({"version": "1.6.0"})
+        self.assertEqual(info["sha256"], {})
+
+
+class TestVerifySha256(unittest.TestCase):
+    def test_verify_ok_and_mismatch(self):
+        fd, path = tempfile.mkstemp(suffix=".bin")
+        os.close(fd)
+        try:
+            with open(path, "wb") as f:
+                f.write(b"standard-query-tool")
+            digest = hashlib.sha256(b"standard-query-tool").hexdigest()
+            self.assertEqual(_sha256_file(path), digest)
+            self.assertTrue(_verify_sha256(path, digest))
+            self.assertTrue(_verify_sha256(path, ""))
+            with self.assertRaises(Exception):
+                _verify_sha256(path, "0" * 64)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    unittest.main()
