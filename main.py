@@ -90,7 +90,7 @@ def main():
     # 设置 Windows AppUserModelID，使任务栏图标正确显示
     try:
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('standard.query.tool.v1.5.9')
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('standard.query.tool.v1.6.0')
     except Exception:
         pass
     

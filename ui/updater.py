@@ -13,13 +13,16 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from . import theme as _theme
 
-APP_VERSION = "1.5.9"
+APP_VERSION = "1.6.0"
 
 # 主程序稳定文件名（不含版本号），便于绿色包在线覆盖更新
 STABLE_EXE_NAME = "StandardQueryTool.exe"
 
-# 版本检测源：Gitee 仅做版本文件读取源
-VERSION_MANIFEST_URL = "https://gitee.com/lovethx2024/app-update-store/raw/main/version.json"
+# 版本检测源：按顺序读取多个清单，取其中最高的版本（兼容国内镜像滞后）
+VERSION_MANIFEST_URLS = (
+    "https://raw.githubusercontent.com/lovethx2018/StandardQueryTool/main/version.json",
+    "https://gitee.com/lovethx2024/app-update-store/raw/main/version.json",
+)
 
 # 手动更新（网盘）兜底地址：当自动下载/替换失败时，弹窗提示用户手动下载。
 LANZOU_URL = "https://wwawy.lanzoub.com/b0j1kkfcd"
@@ -185,23 +188,28 @@ def is_installed_app(exe_path: str = None) -> bool:
 
 
 def fetch_latest_release() -> dict:
-    """获取最新版本信息：从 Gitee 读取 version.json。"""
-    try:
-        resp = _updater_urlopen(VERSION_MANIFEST_URL, timeout=12)
-        raw_data = resp.read()
+    """从多个版本清单中取最高版本，避免镜像滞后挡住新版本。"""
+    best = None
+    errors = []
+    for url in VERSION_MANIFEST_URLS:
         try:
-            data = json.loads(raw_data.decode("utf-8", errors="replace"))
-        except json.JSONDecodeError as e:
-            logger.error("[更新] JSON 解析失败: %s", raw_data[:200])
-            raise Exception(f"版本信息格式错误，无法解析: {e}")
-        
-        info = _normalize_manifest(data)
-        if info.get("version"):
-            logger.info("[更新] 版本清单来源: %s -> v%s", VERSION_MANIFEST_URL, info["version"])
-            return info
-        raise Exception(f"{VERSION_MANIFEST_URL}: version.json 缺少 version 字段")
-    except Exception as e:
-        raise Exception(f"{e}")
+            resp = _updater_urlopen(url, timeout=12)
+            raw_data = resp.read()
+            try:
+                data = json.loads(raw_data.decode("utf-8", errors="replace"))
+            except json.JSONDecodeError as e:
+                raise Exception(f"JSON 解析失败: {e}")
+            info = _normalize_manifest(data)
+            if not info.get("version"):
+                raise Exception("version.json 缺少 version 字段")
+            logger.info("[更新] 版本清单来源: %s -> v%s", url, info["version"])
+            if best is None or is_newer_version(info["version"], best.get("version", "")):
+                best = info
+        except Exception as e:
+            errors.append(f"{url}: {e}")
+    if best is not None:
+        return best
+    raise Exception("；".join(errors) if errors else "无可用版本清单")
 
 
 class UpdateCheckWorker(QThread):

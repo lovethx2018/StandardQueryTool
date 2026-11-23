@@ -1,5 +1,7 @@
 # 标准查新 / StandardQueryTool
 
+当前版本：**v1.6.0**（Windows 10/11 / Python 3.13）
+
 面向 Windows 10/11 的标准检索、状态查新与 PDF 获取桌面工具。聚合多个公开标准平台，支持单本查询、批量查新、替代关系提示、标准台账、本地文档库、PDF 预览与下载，以及自动更新。
 
 > 本项目只用于检索公开标准题录与公开全文，请遵守各数据源的版权声明与使用条款；请勿用于批量抓取、商业转售或传播未获授权的标准文本。
@@ -42,7 +44,7 @@
 ## 快速开始（源码运行）
 
 ```bat
-git clone <your-repo-url> StandardQueryTool
+git clone https://github.com/lovethx2018/StandardQueryTool.git
 cd StandardQueryTool
 
 python -m venv .venv
@@ -82,7 +84,7 @@ python -m venv .venv
 .venv\Scripts\python.exe -m PyInstaller --clean -y StandardQueryTool.spec
 ```
 
-- 使用 PyInstaller 6.x，输出 `dist\StandardQueryTool_v1.5.9_win10_win11_py313\`
+- 使用 PyInstaller 6.x，输出 `dist\StandardQueryTool_v1.6.0_win10_win11_py313\`
 - 安装包使用 [StandardQueryTool_setup.iss](StandardQueryTool_setup.iss)（Inno Setup 6）
 - 构建目录请使用 **纯 ASCII 路径**（PyInstaller 6 + PyQt5 在中文路径下会报 Qt 插件目录不存在；运行时已由 `app_env.py` 兜底）
 - 详细步骤见 [打包必备清单.md](打包必备清单.md)

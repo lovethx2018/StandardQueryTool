@@ -56,3 +56,28 @@ class TestVerifySha256(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestFetchLatestManifest(unittest.TestCase):
+    def test_picks_highest_version_across_mirrors(self):
+        import json
+        from unittest.mock import patch
+        import ui.updater as updater
+
+        payloads = {
+            updater.VERSION_MANIFEST_URLS[0]: {"version": "1.6.0", "notes": "github"},
+            updater.VERSION_MANIFEST_URLS[1]: {"version": "1.5.9", "notes": "gitee"},
+        }
+
+        class Resp:
+            def __init__(self, data):
+                self._data = json.dumps(data).encode("utf-8")
+
+            def read(self):
+                return self._data
+
+        def fake_open(url, timeout=12):
+            return Resp(payloads[url])
+
+        with patch.object(updater, "_updater_urlopen", side_effect=fake_open):
+            info = updater.fetch_latest_release()
+        self.assertEqual(info["version"], "1.6.0")
