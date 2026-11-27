@@ -1,9 +1,9 @@
-; Inno Setup Script for StandardQueryTool v1.6.0
+; Inno Setup Script for StandardQueryTool v1.6.1
 ; 标准查询工具安装程序脚本
 ; 目标平台：Windows 10 / Windows 11（64 位）
 
 #define MyAppName "标准查询工具"
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "1.6.1"
 #define MyAppPublisher "黄加林"
 #define MyAppURL "https://gitee.com/lovethx2024/app-update-store"
 #define MyAppExeName "StandardQueryTool.exe"
@@ -21,8 +21,8 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 LicenseFile=
 ; 绿色包由 PyInstaller 输出到 dist\，安装包成品写入 release\vX.Y.Z\
-OutputDir=release\v1.6.0
-OutputBaseFilename=StandardQueryTool_v1.6.0_win10_win11_py313_setup
+OutputDir=release\v1.6.1
+OutputBaseFilename=StandardQueryTool_v1.6.1_win10_win11_py313_setup
 SetupIconFile=SQT.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -68,7 +68,7 @@ Type: filesandordirs; Name: "{app}\numpy"
 
 [Files]
 ; 打包时先有 dist\ 绿色包，再跑 ISCC；成品 setup 直接进 release\
-Source: "dist\StandardQueryTool_v1.6.0_win10_win11_py313\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\StandardQueryTool_v1.6.1_win10_win11_py313\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "SQT.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

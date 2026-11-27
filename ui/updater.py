@@ -14,7 +14,7 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from . import theme as _theme
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 
 # 主程序稳定文件名（不含版本号），便于绿色包在线覆盖更新
 STABLE_EXE_NAME = "StandardQueryTool.exe"

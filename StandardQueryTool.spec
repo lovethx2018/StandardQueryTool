@@ -97,5 +97,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='StandardQueryTool_v1.6.0_win10_win11_py313',
+    name='StandardQueryTool_v1.6.1_win10_win11_py313',
 )

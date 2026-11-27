@@ -1,17 +1,17 @@
 {
-  "version": "1.6.0",
-  "tag": "v1.6.0",
-  "notes": "v1.6.0 更新内容：\n1. 平台升级：Windows 10/11 + Python 3.13，PyQt5 5.15.11 / PyMuPDF 1.28.2\n2. 修复中文路径下 Qt 插件查找失败导致的启动卡死\n3. 批量查询新增独立缓存（重复批量秒回），并降低条目间等待\n4. 历史/台账迁移到 _data（便携版）或 %APPDATA%（安装版），修复非管理员写入失败\n5. 更新包支持 SHA-256 校验；安装包瘦身（约 164MB → 117MB）\n6. 修复 CECS/DB11 等编号的年份与状态校正",
-  "download_url": "https://github.com/lovethx2018/StandardQueryTool/releases/download/v1.6.0/StandardQueryTool_v1.6.0_win10_win11_py313.zip",
+  "version": "1.6.1",
+  "tag": "v1.6.1",
+  "notes": "v1.6.1 更新内容：\n1. 单本检索：主站点并行预取（默认 4 路），命中即停语义不变\n2. 批量查询：多条标准并行检索（默认 4 路），结果仍按原始顺序落地；实测 2 条约 14.5s（原串行约 30s）\n3. 下载源检测支持并行探测（默认 4 路）\n4. 修复并行预取导致站点状态灯全部变黄的问题\n5. v1.6.0 基础：Windows 10/11 + Python 3.13、批量缓存、数据目录兜底、更新包 SHA-256 校验、包体瘦身",
+  "download_url": "https://github.com/lovethx2018/StandardQueryTool/releases/download/v1.6.1/StandardQueryTool_v1.6.1_win10_win11_py313.zip",
   "download_urls": [
-    "https://github.com/lovethx2018/StandardQueryTool/releases/download/v1.6.0/StandardQueryTool_v1.6.0_win10_win11_py313.zip"
+    "https://github.com/lovethx2018/StandardQueryTool/releases/download/v1.6.1/StandardQueryTool_v1.6.1_win10_win11_py313.zip"
   ],
-  "asset_name": "StandardQueryTool_v1.6.0_win10_win11_py313.zip",
+  "asset_name": "StandardQueryTool_v1.6.1_win10_win11_py313.zip",
   "setup_url": "",
   "setup_urls": [],
   "setup_asset_name": "",
   "sha256": {
-    "StandardQueryTool_v1.6.0_win10_win11_py313.zip": "09e552b54c9d9cfccc2705732a1e095247e2d1dad43cdef1186858710bb828dc"
+    "StandardQueryTool_v1.6.1_win10_win11_py313.zip": "b1616a983271170a893cc9a2a17e02c413e1a44e17d5330b92ab56464fdf1751"
   },
   "lanzou_url": "https://wwawy.lanzoub.com/b0j1kkfcd",
   "lanzou_pwd": "1234"
