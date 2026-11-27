@@ -14,7 +14,7 @@ from PyQt5.QtGui import *
 from app_env import logger, TEMP_DIR, UPDATE_DIR
 from config import Config
 from models import StandardInfo
-from .workers import SearchWorker, DownloadWorker, LocalSearchWorker, DownloadCheckWorker, SilentPreviewDownloadWorker, LanIndexWarmWorker
+from .workers import SearchWorker, BatchSearchWorker, DownloadWorker, LocalSearchWorker, DownloadCheckWorker, SilentPreviewDownloadWorker, LanIndexWarmWorker
 from .widgets import StatusDot, DownloadButton, BubbleNotification, GlassButton, ask_yes_no
 from .settings_dialog import SettingsDialog
 from .document_manager import DocumentManagerPage
@@ -1843,21 +1843,44 @@ class MainWindow(QMainWindow):
         # 显示停止按钮
         self.stop_search_btn.setVisible(True)
         
-        # 开始批量检索
+        # 批量缓存命中直接复用；其余条目交给 BatchSearchWorker 并行检索
+        self._batch_ready = {}
+        pending = []
+        for k, keyword in enumerate(self.batch_data):
+            keyword = keyword.strip()
+            cached = self._load_batch_cached_results(keyword)
+            if cached is not None:
+                self._batch_ready[k] = (cached, False)
+            else:
+                pending.append((k, keyword))
+        self._retire_search_worker()  # 批量开始前收掉单本残留线程
+        self._reset_site_dots()
+        self._batch_worker = None
+        if pending:
+            self._batch_worker = BatchSearchWorker(pending)
+            self._batch_worker.item_done.connect(self.on_batch_item_done)
+            self._batch_worker.finished.connect(self.on_batch_worker_finished)
+            self._batch_worker.start()
         self.process_next_batch()
     
     def on_stop_search(self):
         """停止查新"""
         # 无论单本还是批量，都置位批量取消标志，阻止 process_next_batch 继续调度后续条目
         self._batch_cancelled = True
-        # 取消当前正在运行的搜索线程（单本或批量当前条目）
+        # 取消批量并行检索（未完成条目不再落地）
+        batch_worker = getattr(self, '_batch_worker', None)
+        if batch_worker is not None and batch_worker.isRunning():
+            batch_worker.cancel()
+        # 取消当前正在运行的搜索线程（单本）
         if hasattr(self, 'search_worker') and self.search_worker and self.search_worker.isRunning():
             self.search_worker.cancel()
         self.stop_search_btn.setVisible(False)
         self.progress_label.setText("正在停止...")
     
     def process_next_batch(self):
-        """处理下一条批量检索"""
+        """按原始顺序把已完成的批量结果落地到表格（检索由 BatchSearchWorker 并行完成）"""
+        if not getattr(self, '_batch_search_running', False):
+            return
         # 检查是否被取消
         if getattr(self, '_batch_cancelled', False):
             self._restore_batch_ui()
@@ -1898,41 +1921,17 @@ class MainWindow(QMainWindow):
             self._batch_result_snapshot = list(self.search_results or [])
             return
 
-        # 先更新进度条为"已完成数"（当前索引即已完成的条数）
-        keyword = self.batch_data[self.current_search_index].strip()
-        progress_text = (
-            f"正在查询 {self.current_search_index + 1}/{self.total_search_count}"
-            f"：{keyword}"
-        )
-        self.progress_label.setText(progress_text)
-        self.progress_bar.setValue(self.current_search_index)
+        k = self.current_search_index
+        keyword = self.batch_data[k].strip()
+        self.progress_label.setText(f"正在查询 {k + 1}/{self.total_search_count}：{keyword}")
+        self.progress_bar.setValue(k)
+        ready = self._batch_ready.pop(k, None)
+        if ready is None:
+            return  # 该条尚未完成，等待 on_batch_item_done
+        results, remember = ready
+        if self._apply_batch_item_results(k, results, remember=remember):
+            QTimer.singleShot(0, self.process_next_batch)
 
-        # 重置站点状态
-        self._reset_site_dots()
-
-        # 批量缓存命中：直接复用 30 天内结果，跳过网络
-        cached = self._load_batch_cached_results(keyword)
-        if cached is not None:
-            logger.info("[批量缓存] 命中: %s", keyword)
-            self.progress_label.setText(progress_text + "（缓存命中）")
-            if self._apply_batch_item_results(self.current_search_index, cached, remember=False):
-                QTimer.singleShot(20, self.process_next_batch)
-            return
-
-        # 断开旧线程信号并取消（不阻塞主线程）；仍在跑则换新 spider
-        if self._retire_search_worker():
-            from spiders.spider import SpiderEngine
-            self._spider = SpiderEngine()
-
-        # 创建工作线程（批量查询不检测下载源，且所有行统一标记为"不启用"）
-        self._search_gen = getattr(self, '_search_gen', 0) + 1
-        self.search_worker = SearchWorker(self._get_spider(), keyword, check_download=False, mark_disabled=True)
-        self.search_worker.gen = self._search_gen
-        self.search_worker.progress.connect(self.update_progress)
-        self.search_worker.site_status.connect(self.update_site_status)
-        self.search_worker.finished.connect(self.on_batch_item_finished)
-        self.search_worker.cancelled.connect(self.on_batch_item_cancelled)
-        self.search_worker.start()
 
     def _restore_batch_ui(self):
         """恢复批量检索 UI 状态（按钮、进度条、输入框）"""
@@ -1942,17 +1941,18 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.stop_search_btn.setVisible(False)
 
-    def on_batch_item_cancelled(self):
-        """批量检索中单条被取消。
-        finished 也会带取消结果到达，UI 恢复交给 on_batch_item_finished，避免双气泡。"""
-        pass
-
-    def on_batch_item_finished(self, results):
-        """单条批量检索完成：把对应占位行原地替换为真实结果，标准编号始终在位。"""
-        if not self._is_current_search_worker():
+    def on_batch_item_done(self, index, results):
+        """BatchSearchWorker 单条完成：登记结果，按原始顺序落地到表格。"""
+        if not self._batch_search_running or self._batch_cancelled:
             return
-        if self._apply_batch_item_results(self.current_search_index, results, remember=True):
-            QTimer.singleShot(50, self.process_next_batch)
+        self._batch_ready[index] = (results, True)
+        self.process_next_batch()
+
+    def on_batch_worker_finished(self):
+        """并行工作线程退出：仅在取消时由此恢复 UI（正常完成已在最后一条落地时处理）。"""
+        if self._batch_search_running and self._batch_cancelled:
+            self.process_next_batch()
+
 
     def _apply_batch_item_results(self, k, results, remember=False):
         """应用第 k 条批量结果（网络或缓存），返回是否继续下一条。"""
@@ -3748,10 +3748,8 @@ class MainWindow(QMainWindow):
             (worker.progress, self.update_progress),
             (worker.site_status, self.update_site_status),
             (worker.finished, self.on_search_finished),
-            (worker.finished, self.on_batch_item_finished),
             (worker.error, self.on_search_error),
             (worker.cancelled, self.on_search_cancelled),
-            (worker.cancelled, self.on_batch_item_cancelled),
             (worker.result_found, self.on_result_found),
         ):
             try:
@@ -3795,6 +3793,10 @@ class MainWindow(QMainWindow):
             if w.isRunning():
                 all_workers.append(('search', w))
                 w.wait(wait_ms)
+        bw = getattr(self, '_batch_worker', None)
+        if bw is not None and bw.isRunning():
+            bw.cancel()
+            bw.wait(wait_ms)
         for w in list(getattr(self, '_download_workers', [])):
             if w.isRunning():
                 all_workers.append(('download', w))

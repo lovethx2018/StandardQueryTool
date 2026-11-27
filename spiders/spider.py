@@ -3,6 +3,7 @@
 import re
 import time
 import random
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import shutil
 import webbrowser
@@ -36,6 +37,10 @@ if HAS_REQUESTS:
 class SpiderEngine(QObject):
     """爬虫引擎 - 负责多站点检索和PDF下载"""
     
+    # 并发上限：主站点并行检索数、下载源检测并行标准数（批量查询的引擎会降为 1，由批量层并发）
+    site_concurrency = 4
+    download_concurrency = 4
+
     # 定义信号
     status_updated = pyqtSignal(int, str)
     progress_updated = pyqtSignal(str)
@@ -509,6 +514,48 @@ class SpiderEngine(QObject):
         前 N-3 站为主检索；末 3 站为备用（仅前站无结果且前缀匹配时运行）。"""
         return Config.PRIMARY_SITES, True
 
+    def _run_parallel(self, items, fn, max_workers):
+        """对 items 逐个执行 fn；max_workers>1 时并行。单项异常只记录日志，不影响其他项。"""
+        def _safe(item):
+            try:
+                fn(item)
+            except Exception as e:
+                logger.warning(f"并行任务异常: {str(e)}")
+
+        items = list(items)
+        if max_workers <= 1 or len(items) <= 1:
+            for item in items:
+                _safe(item)
+            return
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(items)), thread_name_prefix="dl-check") as ex:
+            list(ex.map(_safe, items))
+
+    def _prefetch_primary_sites(self, keyword, sites, skip_sites, count):
+        """并行预取前 count 个主站点的原始检索结果。
+        结果由调用方按站点顺序消费，因此命中即停、结果顺序与串行一致。
+        返回 (executor, {idx: future})；无需并行时返回 (None, {})。"""
+        if self.site_concurrency <= 1:
+            return None, {}
+        jobs = []
+        for idx, site in enumerate(sites[:count]):
+            if skip_sites and site['name'] in skip_sites:
+                continue
+            spider_instance = self.spider_manager.get(site['parser'])
+            if spider_instance is None:
+                continue
+            jobs.append((idx, site, spider_instance))
+        if len(jobs) <= 1:
+            return None, {}
+        executor = ThreadPoolExecutor(
+            max_workers=min(self.site_concurrency, len(jobs)),
+            thread_name_prefix="site-search",
+        )
+        prefetched = {}
+        for idx, site, spider_instance in jobs:
+            # 状态灯留到按顺序消费结果时再点亮，避免命中即停后其余站点一直显示“检索中”
+            prefetched[idx] = executor.submit(spider_instance.search, keyword, site)
+        return executor, prefetched
+
     def _search_standard_core(self, keyword, check_download=True, enrich_replacements=True, skip_sites=None, stop_on_first=False):
         """检索单一标准编码的核心逻辑（供 search_standard 包装层调用，逻辑与原实现一致）。
         keyword: 标准编号或名称
@@ -534,96 +581,103 @@ class SpiderEngine(QObject):
         }
         _PRIMARY_SITE_COUNT = max(0, len(Config.PRIMARY_SITES) - 2)
         is_pure_number = self._is_pure_number_query(keyword)
-        for idx, site in enumerate(sites):
-            # 跳过已命中结果的站点（变体查询优化）
-            if skip_sites and site['name'] in skip_sites:
-                logger.info(f"跳过已命中的站点: {site['name']}")
-                continue
-            # 备用站点：纯数字一律查询（同号可能分属 JTG/SL/TD 等行业站）；
-            # 带前缀时：仅前缀匹配才跑，且前站已有同前缀结果可跳过
-            if idx >= _PRIMARY_SITE_COUNT and not is_pure_number:
-                allowed = _BACKUP_PREFIX_MAP.get(site['parser'])
-                if allowed:
-                    kw_prefix = self._keyword_prefix(keyword)
-                    if kw_prefix not in allowed:
-                        logger.info(f"关键词前缀 '{kw_prefix}' 不匹配，跳过备用站点: {site['name']}")
-                        if idx < len(Config.PRIMARY_SITES):
-                            self.status_updated.emit(idx, "no_result")
-                        continue
-                if results:
-                    kw_prefix = self._keyword_prefix(keyword)
-                    if kw_prefix:
-                        has_matching = any(
-                            self._keyword_prefix(getattr(r, 'std_no', '') or '') == kw_prefix
-                            for r in results
-                        )
-                        if has_matching:
-                            logger.info(
-                                f"前{_PRIMARY_SITE_COUNT}站已有匹配前缀 '{kw_prefix}' 的结果，"
-                                f"跳过备用站点: {site['name']}"
-                            )
+        # 主站点并行预取（结果仍按站点顺序消费，命中即停语义不变）
+        _prefetch_ex, _prefetched = self._prefetch_primary_sites(keyword, sites, skip_sites, _PRIMARY_SITE_COUNT)
+        try:
+            for idx, site in enumerate(sites):
+                # 跳过已命中结果的站点（变体查询优化）
+                if skip_sites and site['name'] in skip_sites:
+                    logger.info(f"跳过已命中的站点: {site['name']}")
+                    continue
+                # 备用站点：纯数字一律查询（同号可能分属 JTG/SL/TD 等行业站）；
+                # 带前缀时：仅前缀匹配才跑，且前站已有同前缀结果可跳过
+                if idx >= _PRIMARY_SITE_COUNT and not is_pure_number:
+                    allowed = _BACKUP_PREFIX_MAP.get(site['parser'])
+                    if allowed:
+                        kw_prefix = self._keyword_prefix(keyword)
+                        if kw_prefix not in allowed:
+                            logger.info(f"关键词前缀 '{kw_prefix}' 不匹配，跳过备用站点: {site['name']}")
+                            if idx < len(Config.PRIMARY_SITES):
+                                self.status_updated.emit(idx, "no_result")
                             continue
-                    else:
-                        logger.info(f"前{_PRIMARY_SITE_COUNT}站已有结果，跳过备用站点: {site['name']}")
-                        continue
-            elif idx >= _PRIMARY_SITE_COUNT and is_pure_number:
-                logger.info(f"纯数字查询：启用备用站点 {site['name']}")
-            self._check_cancelled()
+                    if results:
+                        kw_prefix = self._keyword_prefix(keyword)
+                        if kw_prefix:
+                            has_matching = any(
+                                self._keyword_prefix(getattr(r, 'std_no', '') or '') == kw_prefix
+                                for r in results
+                            )
+                            if has_matching:
+                                logger.info(
+                                    f"前{_PRIMARY_SITE_COUNT}站已有匹配前缀 '{kw_prefix}' 的结果，"
+                                    f"跳过备用站点: {site['name']}"
+                                )
+                                continue
+                        else:
+                            logger.info(f"前{_PRIMARY_SITE_COUNT}站已有结果，跳过备用站点: {site['name']}")
+                            continue
+                elif idx >= _PRIMARY_SITE_COUNT and is_pure_number:
+                    logger.info(f"纯数字查询：启用备用站点 {site['name']}")
+                self._check_cancelled()
             
-            self.progress_updated.emit(f"正在检索: {site['name']}")
-            logger.info(f"正在查询站点: {site['name']}")
+                self.progress_updated.emit(f"正在检索: {site['name']}")
+                logger.info(f"正在查询站点: {site['name']}")
             
-            # 更新站点状态为黄色（检索中）
-            self.status_updated.emit(idx, "searching")
+                # 更新站点状态为黄色（检索中）
+                self.status_updated.emit(idx, "searching")
             
-            try:
-                # 使用独立的spider模块（借鉴2026-7-19架构）
-                spider_instance = self.spider_manager.get(site['parser'])
-                if spider_instance:
-                    # 调用独立spider的search方法
-                    site_results = spider_instance.search(keyword, site)
+                try:
+                    # 使用独立的spider模块（借鉴2026-7-19架构）
+                    spider_instance = self.spider_manager.get(site['parser'])
+                    if spider_instance:
+                        # 调用独立spider的search方法
+                        # 主站已并行预取则直接取结果（异常在此重新抛出，与串行行为一致）
+                        site_results = _prefetched[idx].result() if idx in _prefetched else spider_instance.search(keyword, site)
                     
-                    # 使用数据处理器过滤结果
-                    site_results = self.data_processor.filter_results(site_results, keyword)
+                        # 使用数据处理器过滤结果
+                        site_results = self.data_processor.filter_results(site_results, keyword)
 
-                    logger.info(f"[{site['name']}] 解析结果数量: {len(site_results)}")
+                        logger.info(f"[{site['name']}] 解析结果数量: {len(site_results)}")
                     
-                    if site_results:
-                        # 更新站点状态为绿色（成功）
-                        if idx < len(Config.PRIMARY_SITES):
-                            self.status_updated.emit(idx, "success")
+                        if site_results:
+                            # 更新站点状态为绿色（成功）
+                            if idx < len(Config.PRIMARY_SITES):
+                                self.status_updated.emit(idx, "success")
                         
-                        results.extend(site_results)
-                        # 立即发出结果信号，让UI可以增量显示
-                        if not getattr(self, '_suppress_incremental', False):
-                            self.result_found.emit(site_results)
-                        if stop_on_first:
-                            logger.info(f"[{site['name']}] 命中 {len(site_results)} 条结果，停止后续站点")
-                            break
-                        logger.info(f"[{site['name']}] 命中 {len(site_results)} 条结果，继续检索后续站点")
+                            results.extend(site_results)
+                            # 立即发出结果信号，让UI可以增量显示
+                            if not getattr(self, '_suppress_incremental', False):
+                                self.result_found.emit(site_results)
+                            if stop_on_first:
+                                logger.info(f"[{site['name']}] 命中 {len(site_results)} 条结果，停止后续站点")
+                                break
+                            logger.info(f"[{site['name']}] 命中 {len(site_results)} 条结果，继续检索后续站点")
+                        else:
+                            # 无结果，继续下一个站点
+                            logger.info(f"[{site['name']}] 无结果，继续下一个站点")
+                            if idx < len(Config.PRIMARY_SITES):
+                                self.status_updated.emit(idx, "no_result")
                     else:
-                        # 无结果，继续下一个站点
-                        logger.info(f"[{site['name']}] 无结果，继续下一个站点")
+                        # 所有主站 parser 均已注册到 SpiderManager；未注册视为配置错误
+                        logger.warning(f"[{site['name']}] 未注册解析器: {site.get('parser')}")
                         if idx < len(Config.PRIMARY_SITES):
-                            self.status_updated.emit(idx, "no_result")
-                else:
-                    # 所有主站 parser 均已注册到 SpiderManager；未注册视为配置错误
-                    logger.warning(f"[{site['name']}] 未注册解析器: {site.get('parser')}")
+                            self.status_updated.emit(idx, "failed")
+
+                except RuntimeError as e:
+                    if "搜索已被取消" in str(e):
+                        raise
+                    logger.warning(f"[{site['name']}] 检索异常: {str(e)}")
                     if idx < len(Config.PRIMARY_SITES):
                         self.status_updated.emit(idx, "failed")
-
-            except RuntimeError as e:
-                if "搜索已被取消" in str(e):
-                    raise
-                logger.warning(f"[{site['name']}] 检索异常: {str(e)}")
-                if idx < len(Config.PRIMARY_SITES):
-                    self.status_updated.emit(idx, "failed")
-                continue
-            except Exception as e:
-                logger.warning(f"[{site['name']}] 检索异常: {str(e)}")
-                if idx < len(Config.PRIMARY_SITES):
-                    self.status_updated.emit(idx, "failed")
-                continue
+                    continue
+                except Exception as e:
+                    logger.warning(f"[{site['name']}] 检索异常: {str(e)}")
+                    if idx < len(Config.PRIMARY_SITES):
+                        self.status_updated.emit(idx, "failed")
+                    continue
+        finally:
+            if _prefetch_ex is not None:
+                _prefetch_ex.shutdown(wait=False, cancel_futures=True)
         
         # 补充替代规范信息：废止标准始终查；现行标准也查（含批量检索），
         # 以便显示"即将实施/已被替代"的替代版本（如 GB/T 1345-2005 → GB/T 1345-2026）。
@@ -1032,11 +1086,13 @@ class SpiderEngine(QObject):
             targets = self._iter_download_targets(results)
             logger.info(f"[下载源检测] 开始检测 {len(targets)} 条结果（仅网络源）")
 
-            for std_info in targets:
-                # 解析阶段已标记可下载（如 openstd 的 hcno 链接），保留网络下载链接
-                if std_info.download_status == "可下载":
-                    continue
-                self._try_mark_downloadable(std_info, "下载源检测")
+            # 解析阶段已标记可下载（如 openstd 的 hcno 链接）的保留网络下载链接，不再重复探测
+            pending = [t for t in targets if t.download_status != "可下载"]
+            self._run_parallel(
+                pending,
+                lambda std_info: self._try_mark_downloadable(std_info, "下载源检测"),
+                self.download_concurrency,
+            )
 
             logger.info("[下载源检测] 检测完成")
 

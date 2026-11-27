@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """工作线程：检索、下载、本地匹配。"""
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt5.QtCore import QThread, pyqtSignal
 from app_env import logger
 from utils import _FileNameParser
@@ -90,6 +92,85 @@ class SearchWorker(QThread):
                 self.spider.result_found.disconnect(self._on_result_found)
             except (TypeError, RuntimeError):
                 pass
+
+class BatchSearchWorker(QThread):
+    """批量检索工作线程：多条关键词并行（每个工作线程复用一个 SpiderEngine，站点内串行）。
+
+    每条完成即发 item_done(索引, 结果)，由 UI 按原始顺序落地；结果语义与逐条 SearchWorker
+    （mark_disabled=True、stop_on_first=True）一致。
+    """
+    item_done = pyqtSignal(int, list)
+    concurrency = 4
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self._items = list(items)  # [(索引, 关键词)]
+        self._cancelled = False
+        self._lock = threading.Lock()
+        self._engines = []
+        self._local = threading.local()
+
+    def cancel(self):
+        self._cancelled = True
+        with self._lock:
+            for engine in self._engines:
+                engine.cancel()
+
+    def _engine(self):
+        engine = getattr(self._local, "engine", None)
+        if engine is None:
+            from spiders.spider import SpiderEngine
+            engine = SpiderEngine()
+            engine.site_concurrency = 1  # 并发已在条目层完成，站点层保持串行
+            with self._lock:
+                self._engines.append(engine)
+                if self._cancelled:
+                    engine.cancel()
+            self._local.engine = engine
+        return engine
+
+    def _search(self, index, keyword):
+        if self._cancelled:
+            return index, None
+        engine = self._engine()
+        if hasattr(engine, "reset_cancel"):
+            engine.reset_cancel()
+        try:
+            results = engine.search_standard(keyword, False, stop_on_first=True)
+        except RuntimeError as e:
+            if self._cancelled or "搜索已被取消" in str(e):
+                return index, None
+            logger.error(f"批量搜索异常: {str(e)}")
+            return index, []
+        except Exception as e:
+            logger.error(f"批量搜索异常: {str(e)}")
+            return index, []
+        # 批量查询：强制关闭下载功能（含废止标准的替代版本行，一律不启用）
+        for std in results:
+            std.download_status = "不启用"
+            replacement = getattr(std, "replacement", None)
+            if replacement is not None:
+                replacement.download_status = "不启用"
+        return index, results
+
+    def run(self):
+        if not self._items:
+            return
+        workers = max(1, min(self.concurrency, len(self._items)))
+        executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="batch-search")
+        try:
+            futures = [executor.submit(self._search, i, kw) for i, kw in self._items]
+            for future in as_completed(futures):
+                if self._cancelled:
+                    break
+                index, results = future.result()
+                if results is not None:
+                    self.item_done.emit(index, results)
+        except Exception as e:
+            logger.error(f"批量搜索调度异常: {str(e)}")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
 
 class DownloadWorker(QThread):
     """下载工作线程"""
